@@ -12,6 +12,7 @@ import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .const import DOMAIN
 from .models import ApiClientProtocol, NotificationInfo
 
 _LOGGER = logging.getLogger(__name__)
@@ -134,7 +135,7 @@ class HisenseWebSocket:
                 #Listen until the socket closes
                 await self._listen()
 
-            except (aiohttp.ClientError, asyncio.TimeoutError, Exception) as err:
+            except Exception as err:  # the loop must survive anything to keep retrying
                 if self._closing:
                     break
                 
@@ -196,9 +197,13 @@ class HisenseWebSocket:
         Returns immediately to avoid blocking Home Assistant's bootstrap.
         """
         self._closing = False
-        # Using self.hass.loop.create_task is the definitive way to bypass 
-        # the bootstrap setup tracking for persistent background tasks.
-        self._task = self.hass.loop.create_task(self._connect_ws_loop())
+        # A background task keeps HA's startup from blocking on this
+        # coroutine while still being visible to and cancellable by HA
+        # (unlike a raw loop.create_task, which neither bootstrap nor
+        # shutdown ever sees).
+        self._task = self.hass.async_create_background_task(
+            self._connect_ws_loop(), name=f"{DOMAIN} websocket"
+        )
         _LOGGER.debug("Hisense WebSocket background process initiated")
 
     async def async_disconnect(self) -> None:
